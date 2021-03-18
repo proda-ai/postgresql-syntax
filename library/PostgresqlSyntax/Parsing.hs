@@ -1078,7 +1078,7 @@ customizedAExpr cExpr = suffixRec base suffix where
     ]
   suffix a = asum
     [ typecastExpr a TypecastAExpr
-    , symbolicBinOpExpr a aExpr SymbolicBinOpAExpr
+    , symbolicBinOpExpr a base SymbolicBinOpAExpr
     , SuffixQualOpAExpr a <$> (space *> qualOp)
     , space1 *> asum
       [ do
@@ -1168,7 +1168,7 @@ customizedBExpr cExpr = suffixRec base suffix where
     ]
   suffix a = asum
     [ typecastExpr a TypecastBExpr
-    , symbolicBinOpExpr a bExpr SymbolicBinOpBExpr
+    , symbolicBinOpExpr a base SymbolicBinOpBExpr
     , do
       space1
       keyword "is"
