@@ -358,7 +358,7 @@ selectWithParens = inParens
 selectNoParens = withSelectNoParens <|> simpleSelectNoParens
 
 sharedSelectNoParens _with = do
-  _select     <- selectClause
+  _select     <- selectClauseNoParens
   _sort       <- optional (space1 *> sortClause)
   _limit      <- optional (space1 *> selectLimit)
   _forLocking <- optional (space1 *> forLockingClause)
@@ -382,6 +382,10 @@ withSelectNoParens = do
 
 selectClause = suffixRec base suffix where
   base = asum [Right <$> selectWithParens, Left <$> baseSimpleSelect]
+  suffix a = Left <$> extensionSimpleSelect a
+
+selectClauseNoParens = suffixRec base suffix where
+  base = Left <$> baseSimpleSelect
   suffix a = Left <$> extensionSimpleSelect a
 
 baseSimpleSelect = asum
@@ -1187,8 +1191,21 @@ customizedCExpr columnref = asum
   [ ParamCExpr <$> (char '$' *> decimal <* endHead) <*> optional
     (space *> indirection)
   , CaseCExpr <$> caseExpr
-  , ImplicitRowCExpr <$> implicitRow
   , ExplicitRowCExpr <$> explicitRow
+  , char '(' *> space *> asum
+    [ do
+        a <- selectNoParens <* endHead <* space <* char ')'
+        b <- optional (space *> indirection)
+        return (SelectWithParensCExpr (NoParensSelectWithParens a) b)
+    , do
+      a <- aExpr
+      endHead
+      asum
+        [ ImplicitRowCExpr <$> (implicitRowCont a <* space <* char ')')
+        , InParensCExpr a
+          <$> (space *> char ')' *> optional (space *> indirection))
+        ]
+    ]
   , inParensWithClause (keyword "grouping")
                        (GroupingCExpr <$> sep1 commaSeparator aExpr)
   , keyword "exists" *> space *> (ExistsCExpr <$> selectWithParens)
@@ -1199,13 +1216,6 @@ customizedCExpr columnref = asum
       [ fmap (fmap (ArrayCExpr . Right))       arrayExprCont
       , fmap (fmap (ArrayCExpr . Left) . pure) selectWithParens
       ]
-  , do
-    a <- wrapToHead selectWithParens
-    endHead
-    b <- optional (space *> indirection)
-    return (SelectWithParensCExpr a b)
-  , InParensCExpr <$> (inParens aExpr <* endHead) <*> optional
-    (space *> indirection)
   , AexprConstCExpr <$> wrapToHead aexprConst
   , FuncCExpr <$> funcExpr
   , ColumnrefCExpr <$> columnref
@@ -1261,8 +1271,9 @@ row = ExplicitRowRow <$> explicitRow <|> ImplicitRowRow <$> implicitRow
 
 explicitRow = keyword "row" *> space *> inParens (optional exprList)
 
-implicitRow = inParens $ do
-  a <- wrapToHead aExpr
+implicitRow = inParens (wrapToHead aExpr >>= implicitRowCont)
+
+implicitRowCont a = do
   commaSeparator
   b <- exprList
   return $ case NonEmpty.consAndUnsnoc a b of
