@@ -1185,9 +1185,25 @@ customizedBExpr cExpr = suffixRec base suffix where
       return (IsOpBExpr a b c)
     ]
 
-cExpr = customizedCExpr columnref
+cExpr = asum
+  [ cExprCommon
+  , FuncCExpr <$> funcExprNoCont
+  , do
+      a <- colId
+      endHead
+      asum
+        [ FuncCExpr <$> funcExprCont a
+        , ColumnrefCExpr <$> columnrefCont a
+        ]
+  ]
 
 customizedCExpr columnref = asum
+  [ cExprCommon
+  , FuncCExpr <$> funcExpr
+  , ColumnrefCExpr <$> columnref
+  ]
+
+cExprCommon = asum
   [ ParamCExpr <$> (char '$' *> decimal <* endHead) <*> optional
     (space *> indirection)
   , CaseCExpr <$> caseExpr
@@ -1217,10 +1233,7 @@ customizedCExpr columnref = asum
       , fmap (fmap (ArrayCExpr . Left) . pure) selectWithParens
       ]
   , AexprConstCExpr <$> wrapToHead aexprConst
-  , FuncCExpr <$> funcExpr
-  , ColumnrefCExpr <$> columnref
   ]
-
 
 -- *
 -------------------------
@@ -1315,16 +1328,28 @@ elseClause = do
   space1
   return a
 
-funcExpr = asum
+funcExpr :: HeadedParsec Void Text FuncExpr
+funcExpr = funcExprNoCont <|> (wrapToHead colId >>= funcExprCont)
+
+funcExprNoCont :: HeadedParsec Void Text FuncExpr
+funcExprNoCont = asum
   [ SubexprFuncExpr <$> funcExprCommonSubexpr
   , do
-    a <- funcApplication
-    endHead
-    b <- optional (space1 *> withinGroupClause)
-    c <- optional (space1 *> filterClause)
-    d <- optional (space1 *> overClause)
-    return (ApplicationFuncExpr a b c d)
+    app <- funcApplicationNoCont
+    appFuncExprCont app
   ]
+funcExprCont :: Ident -> HeadedParsec Void Text FuncExpr
+funcExprCont ident = do
+  a <- funcApplicationContIdent ident
+  endHead
+  appFuncExprCont a
+
+appFuncExprCont a = do
+  b <- optional (space1 *> withinGroupClause)
+  c <- optional (space1 *> filterClause)
+  d <- optional (space1 *> overClause)
+  return (ApplicationFuncExpr a b c d)
+
 
 funcExprWindowless = asum
   [ CommonSubexprFuncExprWindowless <$> funcExprCommonSubexpr
@@ -1477,8 +1502,29 @@ trimList = asum
   , ExprListTrimList <$> exprList
   ]
 
-funcApplication =
-  inParensWithLabel FuncApplication funcName (optional funcApplicationParams)
+funcApplication = colId >>= funcApplicationContIdent
+
+funcApplicationNoCont :: HeadedParsec Void Text FuncApplication
+funcApplicationNoCont = do
+  label <- wrapToHead funcNameNoCont
+  funcApplicationContFuncName label
+
+funcApplicationContIdent :: Ident -> HeadedParsec Void Text FuncApplication
+funcApplicationContIdent ident = do
+  label <- wrapToHead $ funcNameCont ident
+  funcApplicationContFuncName label
+
+funcApplicationContFuncName
+  :: FuncName -> HeadedParsec Void Text FuncApplication
+funcApplicationContFuncName label = do
+  space
+  char '('
+  endHead
+  space
+  content <- optional funcApplicationParams
+  space
+  char ')'
+  pure (FuncApplication label content)
 
 funcApplicationParams = asum
   [ starFuncApplicationParams
@@ -2011,12 +2057,15 @@ qualifiedName =
     <$> colId
 
 columnref = customizedColumnref colId
+columnrefCont = customizedColumnrefCont
 
 filteredColumnref _keywords = customizedColumnref (filteredColId _keywords)
 
 customizedColumnref colId = do
   a <- wrapToHead colId
-  endHead
+  customizedColumnrefCont a
+
+customizedColumnrefCont a = do
   b <- optional (space *> indirection)
   return (Columnref a b)
 
@@ -2042,11 +2091,13 @@ func_name:
   | ColId indirection
 -}
 funcName =
-  IndirectedFuncName
-    <$> wrapToHead colId
-    <*> (space *> indirection)
-    <|> TypeFuncName
-    <$> typeFunctionName
+  (wrapToHead colId >>= funcNameCont) <|> TypeFuncName <$> typeFunctionName
+
+funcNameCont :: Ident -> HeadedParsec Void Text FuncName
+funcNameCont a = IndirectedFuncName a <$> (space *> indirection)
+funcNameNoCont :: HeadedParsec Void Text FuncName
+funcNameNoCont = TypeFuncName <$> typeFunctionName
+
 
 {-
 type_function_name:
