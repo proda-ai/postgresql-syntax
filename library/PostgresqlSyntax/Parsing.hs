@@ -1067,14 +1067,28 @@ customizedAExpr cExpr = suffixRec base suffix where
   base  = asum
     [ DefaultAExpr <$ keyword "default"
     , UniqueAExpr <$> (keyword "unique" *> space1 *> selectWithParens)
-    , OverlapsAExpr
-    <$> wrapToHead row
-    <*> (space1 *> keyword "overlaps" *> space1 *> endHead *> row)
     , qualOpExpr aExpr PrefixQualOpAExpr
     , PlusAExpr <$> plusedExpr aExpr
     , MinusAExpr <$> minusedExpr aExpr
     , NotAExpr <$> (keyword "not" *> space1 *> aExpr)
-    , CExprAExpr <$> cExpr
+    , char '(' *> space *> asum
+      [ CExprAExpr <$> cExprContParenNoExpr
+      , do
+        a <- aExpr
+        endHead
+        asum
+          [ CExprAExpr <$> cExprContParenExpr a
+          , do
+            b <- wrapToHead $ ImplicitRowRow <$> implicitRowCont a
+            space1
+            keyword "overlaps"
+            space1
+            endHead
+            c <- row
+            return $ OverlapsAExpr b c
+          ]
+      ]
+    , CExprAExpr <$> cExprNoCont
     ]
   suffix a = asum
     [ typecastExpr a TypecastAExpr
@@ -1185,20 +1199,21 @@ customizedBExpr cExpr = suffixRec base suffix where
       return (IsOpBExpr a b c)
     ]
 
-cExpr = asum
+cExpr :: HeadedParsec Void Text CExpr
+cExpr = asum [cExprNoCont, char '(' *> space *> cExprContParen]
+
+cExprNoCont = asum
   [ cExprCommon
   , FuncCExpr <$> funcExprNoCont
   , do
-      a <- colId
-      endHead
-      asum
-        [ FuncCExpr <$> funcExprCont a
-        , ColumnrefCExpr <$> columnrefCont a
-        ]
+    a <- colId
+    endHead
+    asum [FuncCExpr <$> funcExprCont a, ColumnrefCExpr <$> columnrefCont a]
   ]
 
 customizedCExpr columnref = asum
   [ cExprCommon
+  , char '(' *> space *> cExprContParen
   , FuncCExpr <$> funcExpr
   , ColumnrefCExpr <$> columnref
   ]
@@ -1208,20 +1223,6 @@ cExprCommon = asum
     (space *> indirection)
   , CaseCExpr <$> caseExpr
   , ExplicitRowCExpr <$> explicitRow
-  , char '(' *> space *> asum
-    [ do
-        a <- selectNoParens <* endHead <* space <* char ')'
-        b <- optional (space *> indirection)
-        return (SelectWithParensCExpr (NoParensSelectWithParens a) b)
-    , do
-      a <- aExpr
-      endHead
-      asum
-        [ ImplicitRowCExpr <$> (implicitRowCont a <* space <* char ')')
-        , InParensCExpr a
-          <$> (space *> char ')' *> optional (space *> indirection))
-        ]
-    ]
   , inParensWithClause (keyword "grouping")
                        (GroupingCExpr <$> sep1 commaSeparator aExpr)
   , keyword "exists" *> space *> (ExistsCExpr <$> selectWithParens)
@@ -1234,6 +1235,31 @@ cExprCommon = asum
       ]
   , AexprConstCExpr <$> wrapToHead aexprConst
   ]
+
+-- cExpr following a '('
+cExprContParen = asum
+  [ cExprContParenNoExpr
+  , do
+    a <- aExpr
+    endHead
+    cExprContParenExpr a
+  ]
+
+cExprContParenNoExpr = do
+  a <- selectNoParens <* endHead <* space <* char ')'
+  b <- optional (space *> indirection)
+  return (SelectWithParensCExpr (NoParensSelectWithParens a) b)
+
+-- cExpr following a '(' plus an aExpr.
+cExprContParenExpr :: AExpr -> HeadedParsec Void Text CExpr
+cExprContParenExpr a = asum
+  [ ImplicitRowCExpr <$> (implicitRowCont a <* space <* char ')')
+  , InParensCExpr a <$> (space *> char ')' *> optional (space *> indirection))
+  ]
+
+
+openParenAExpr :: HeadedParsec Void Text AExpr
+openParenAExpr = char '(' *> space *> aExpr <* endHead
 
 -- *
 -------------------------
