@@ -313,7 +313,9 @@ selectWithParens = inParens (WithParensSelectWithParens <$> selectWithParens <|>
 selectNoParens = withSelectNoParens <|> simpleSelectNoParens
 
 sharedSelectNoParens _with = do
-  _select <- selectClauseNoParens
+  _select <- case _with of
+    Just {} -> selectClause
+    Nothing -> selectClauseNoParens
   _sort <- optional (space1 *> sortClause)
   _limit <- optional (space1 *> selectLimit)
   _forLocking <- optional (space1 *> forLockingClause)
@@ -1121,7 +1123,8 @@ customizedCExpr columnref =
               endHead
               asum
                 [ ImplicitRowCExpr <$> implicitRowTail a,
-                  InParensCExpr a
+                  convertNestedParenSelect
+                    . InParensCExpr a
                     <$> (space *> char ')' *> optional (space *> indirection))
                 ]
           ],
@@ -1139,6 +1142,21 @@ customizedCExpr columnref =
       FuncCExpr <$> funcExpr,
       ColumnrefCExpr <$> columnref
     ]
+
+convertNestedParenSelect :: CExpr -> CExpr
+convertNestedParenSelect cExpr = case go cExpr of
+  Left x -> SelectWithParensCExpr x Nothing
+  Right x -> x
+  where
+    go :: CExpr -> Either SelectWithParens CExpr
+    go (InParensCExpr (CExprAExpr e) ind) = case go e of
+      Left select -> case ind of
+        Nothing -> Left $ WithParensSelectWithParens select
+        Just {} ->
+          Right $ SelectWithParensCExpr (WithParensSelectWithParens select) ind
+      Right x -> Right $ InParensCExpr (CExprAExpr x) ind
+    go (SelectWithParensCExpr a Nothing) = Left a
+    go x = Right x
 
 -- *
 
