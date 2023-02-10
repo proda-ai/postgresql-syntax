@@ -313,7 +313,7 @@ selectWithParens = inParens (WithParensSelectWithParens <$> selectWithParens <|>
 selectNoParens = withSelectNoParens <|> simpleSelectNoParens
 
 sharedSelectNoParens _with = do
-  _select <- selectClause
+  _select <- selectClauseNoParens
   _sort <- optional (space1 *> sortClause)
   _limit <- optional (space1 *> selectLimit)
   _forLocking <- optional (space1 *> forLockingClause)
@@ -343,6 +343,11 @@ selectClause = suffixRec base suffix
         [ Right <$> selectWithParens,
           Left <$> baseSimpleSelect
         ]
+    suffix a = Left <$> extensionSimpleSelect a
+
+selectClauseNoParens = suffixRec base suffix
+  where
+    base = Left <$> baseSimpleSelect
     suffix a = Left <$> extensionSimpleSelect a
 
 baseSimpleSelect =
