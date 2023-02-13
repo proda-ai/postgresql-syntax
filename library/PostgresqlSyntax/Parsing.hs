@@ -1904,7 +1904,7 @@ firstOrNext =
     <|> True <$ keyword "next"
 
 selectFetchFirstValue =
-  ExprSelectFetchFirstValue <$> cExpr
+  ExprSelectFetchFirstValue . convertNestedParenSelect <$> cExpr
     <|> NumSelectFetchFirstValue <$> (plusOrMinus <* endHead <* space) <*> iconstOrFconst
 
 plusOrMinus = False <$ char '+' <|> True <$ char '-'
